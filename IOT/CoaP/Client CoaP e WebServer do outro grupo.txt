@@ -1,0 +1,260 @@
+#include <WiFi.h>
+#include <WebServer.h>
+
+//Cliente CoAP
+#include <WiFiUdp.h>
+#include <coap-simple.h>
+
+//I2C
+#include <Wire.h>
+
+
+const char* ssid = "iPhone de Ana Luiza";
+const char* password = "nalunalu";
+WebServer server(80);
+bool LEDstatus = LOW;
+bool LEDstatus_server = LOW;
+
+float ultDistancia;
+float ultTemperatura;
+
+float media_temp;
+float media_dist;
+
+
+WiFiUDP udp;
+Coap coap(udp);
+
+// CoAP client response callback
+void callback_response(CoapPacket &packet, IPAddress ip, int port) {
+  char p[packet.payloadlen + 1];
+  memcpy(p, packet.payload, packet.payloadlen);
+  p[packet.payloadlen] = NULL;
+
+  Serial.println(p);
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  //WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println("Connected on ");
+  Serial.println(WiFi.localIP());
+
+  //HTTP WebServer
+  server.on("/", handle_OnConnect);
+  server.on("/ledon", handle_ledon);
+  server.on("/ledoff", handle_ledoff);
+  server.on("/atualizaDistancia", handle_distAtualiza);
+  server.on("/atualizaTemperatura", handle_tempAtuliza);
+  server.onNotFound(handle_NotFound);
+  server.begin();
+  Serial.println("HTTP server started");
+
+  //CoAP
+  Serial.println("Setup Response Callback");
+  coap.response(callback_response);
+  coap.start(); // start coap server/client
+}
+
+void loop() {
+  server.handleClient();
+  if(LEDstatus)
+    digitalWrite(LED_BUILTIN, HIGH);
+  else
+    digitalWrite(LED_BUILTIN, LOW);
+
+  //int msgid = coap.get(IPAddress(192, 168, 0, 3), 5683, "light");
+ );
+
+  coap.loop();
+
+  delay(1000);
+}
+// ---------------------- I2C ----------------------------
+bool requestFloat(uint8_t addr, float &valor) {
+  uint32_t t0 = millis();
+
+  Wire.requestFrom((int)addr, (uint8_t)sizeof(float));
+  while (Wire.available() < (int)sizeof(float)) {
+    if (millis() - t0 > I2C_TIMEOUT_MS) return false;
+    delay(1);
+  }
+
+  uint8_t buf[sizeof(float)];
+  for (int i = 0; i < (int)sizeof(float); i++) {
+    buf[i] = Wire.read();
+  }
+  memcpy(&valor, buf, sizeof(float));
+  return true;
+}
+
+void RequestDist(){
+  Wire.beginTransmission(SLAVE_ADDR);
+  Wire.write('c');
+  Wire.endTransmission();
+
+  delay(5);
+
+  float medida = 0.0f;
+  bool ok = requestFloat(SLAVE_ADDR, medida);
+  if (!ok) {
+    Serial.println("*ERRO de leitura I2C Dist*");
+  }
+
+  int dist = coap.get(IPAddress(192, 168, 0, 3), 5683, "dist");
+
+  media_dist = (medida + dist)/2;
+
+
+}
+
+void RequestTemp(){
+  Wire.beginTransmission(SLAVE_ADDR);
+  Wire.write('a');
+  Wire.endTransmission();
+
+  delay(5);
+
+  float medida = 0.0f;
+  bool ok = requestFloat(SLAVE_ADDR, medida);
+  if (!ok) {
+    Serial.println("*ERRO de leitura I2C Temp*");
+  }
+
+  int temp = coap.get(IPAddress(192, 168, 0, 3), 5683, "temp");
+
+  media_temp = (medida + temp)/2;
+}  
+
+// ---------------------------- HTTP ----------------------------
+void handle_OnConnect() {
+  Serial.println("Pagina Conectada");
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_ledon() {
+  LEDstatus = HIGH;
+  Serial.println("LED BUILTIN Status: ON");
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_ledoff_server() {
+  coap.put(IPAddress(192, 168, 0, 3), 5683, "led_server", "0");
+  LEDstatus_server = LOW;
+  Serial.println("LED BUILTIN Server CoAP Status: OFF");
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+
+void handle_ledon_server() {
+  coap.put(IPAddress(192, 168, 0, 3), 5683, "led_server", "1");
+  LEDstatus_server = HIGH;
+  Serial.println("LED BUILTIN Server CoAP Status: ON");
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_ledoff() {
+  LEDstatus = LOW;
+  Serial.println("LED BUILTIN Status: OFF");
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_distAtualiza() {
+  RequestDist();
+  ultDistancia = media_dist;
+  Serial.print("Distancia atualizada: ");
+  Serial.println(UltDistancia);
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_tempAtualiza() {
+  ResquestTemp();
+  ultTemperatura = media_temp;
+   Serial.print("Temperatura atualizada: ");
+  Serial.println(UltTemperatura);
+  server.send(200, "text/html", SendHTML(ultDistancia, ultTemperatura, LEDstatus, LEDstatus_server));
+}
+
+void handle_NotFound(){
+  server.send(404, "text/plain", "Not found");
+}
+
+String SendHTML(bool distanciaStat, bool temperaturaStat, uint8_t led1stat, uuint8_t led2stat){ 
+  String ledStatus = led1stat ? "Aceso" : "Apagado";
+  String ledStatus_server = led2stat ? "Aceso" : "Apagado"; 
+
+  String ptr = "<!DOCTYPE html><html>\n";
+  ptr += "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+  ptr += "<meta charset=\"utf-8\">\n";
+  ptr += "<link href=\"https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,200..1000;1,6..12,200..1000&family=Outfit:wght@100..900&display=swap\" rel=\"stylesheet\">";
+  ptr += "<title>Webserver de Sensores</title>\n";
+  ptr += "<style>";
+  ptr += "html,body{height:100%;margin:0;padding:0;;background:#f4f4f4;font-size: 14px;font-family: 'Outfit', sans-serif;scroll-behavior: smooth;}";
+  ptr += "body{display:flex;align-items:center;justify-content:center;}";
+  ptr += ".card{background:#ffffff;padding:30px 40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:280px;}";
+  ptr += "h1{margin:0 0 10px 0;font-size:24px;color:#222;text-align:center;}";
+  ptr += "h2{margin:0 0 25px 0;font-size:18px;color:#555;text-align:center;}";
+  ptr += ".row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:16px;}";
+  ptr += ".btn{flex:1;display:inline-block;padding:12px 10px;border-radius:8px;border:2px solid #333;";
+  ptr += "background:#ffffff;color:#333;font-size:16px;font-weight:500;text-decoration:none;cursor:pointer;}";
+  ptr += ".btn:hover{background:#f0f0f0;}";
+  ptr += ".value{min-width:110px;text-align:right;font-size:16px;color:#333;}";
+  ptr += ".led-on{color:#27ae60;font-weight:bold;}";
+  ptr += ".led-off{color:#c0392b;font-weight:bold;}";
+  ptr += "</style>\n";
+  ptr += "</head>\n";
+  ptr += "<body>\n";
+  ptr += "<div class=\"card\">";
+  ptr += "<h1>Webserver de Sensores</h1>";
+  ptr += "<h2>Escolha a medida desejada</h2>";
+
+  //Distância
+  ptr += "<div class=\"row\">";
+  ptr += "<a class=\"btn\" href=\"/distancia\">Distância</a>";
+  ptr += "<div class=\"value\">" + String(ultDistancia, 3) + "cm</div>";
+  ptr += "</div>";
+
+  //Temperatura
+  ptr += "<div class=\"row\">";
+  ptr += "<a class=\"btn\" href=\"/temperatura\">Temperatura</a>";
+  ptr += "<div class=\"value\">" + String(ultTemperatura, 3) + " °C</div>";
+  ptr += "</div>";
+
+  //LED 1
+  ptr += "<div class=\"row\">";
+  // botão para alternar LED
+  if (led1stat) {
+    ptr += "<a class=\"btn\" href=\"/ledoff\">Botão LED</a>";
+    ptr += "<div class=\"value led-on\">" + ledStatus + "</div>";
+  } else {
+    ptr += "<a class=\"btn\" href=\"/ledon\">Botão LED</a>";
+    ptr += "<div class=\"value led-off\">" + ledStatus + "</div>";
+  }
+  ptr += "</div>";
+
+
+  //LED 2
+  ptr += "<div class=\"row\">";
+  // botão para alternar LED
+  if (led1stat) {
+    ptr += "<a class=\"btn\" href=\"/ledoff_server\">Botão LED</a>";
+    ptr += "<div class=\"value led-on\">" + ledStatus_server + "</div>";
+  } else {
+    ptr += "<a class=\"btn\" href=\"/ledon_server\">Botão LED</a>";
+    ptr += "<div class=\"value led-off\">" + ledStatus_server + "</div>";
+  }
+  ptr += "</div>";
+
+  ptr += "</div>"; // .card
+  ptr += "</body>\n</html>\n";
+
+  return ptr;
+}
