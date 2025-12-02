@@ -2,23 +2,24 @@
 
 #include <Wire.h>
 
-#include <WiFiUdp.h>
+#include <WiFi.h>
+#include <WiFiUDP.h>
 #include <coap-simple.h>
 
 #include <PubSubClient.h>
-#include <WiFi.h>
 //const char *WIFI_SSID = "AndroidAP54EA";  
 //const char *WIFI_PASSW = "12345678";    
-const char *WIFI_SSID = "moto g84 5G_5388";
-const char *WIFI_PASSW = "fcnb64axjefe8a9";
+//const char *WIFI_SSID = "moto g84 5G_5388";
+//const char *WIFI_PASSW = "fcnb64axjefe8a9";
+const char *WIFI_SSID = "iPhone de Ana Luiza";
+const char *WIFI_PASSW = "nalunalu";
+//const char *WIFI_SSID = "Странная лягушка";
+//const char *WIFI_PASSW = "putini00";
 WiFiClient wifiClient;
 
-unsigned long previousMillisMenu = 0;
-unsigned long previuosMillisResponse = 0;
-bool grupo2 = false;
 char opcao;
 const long interval1 = 100;
-float valorRecebido;
+float valorRecebido = 0.0;
 int opcaotransmitida = 0;
 
 // --- Coap things ---
@@ -26,6 +27,8 @@ int opcaotransmitida = 0;
 WiFiUDP udp;
 Coap coap(udp);
 
+// cliente não usa o endpoint light
+/*
 // CoAP server endpoint URL
 void callback_light(CoapPacket &packet, IPAddress ip, int port) {
   char clientPayload[packet.payloadlen + 1];
@@ -41,29 +44,102 @@ void callback_light(CoapPacket &packet, IPAddress ip, int port) {
         if(message == 'a'){  //temp
          transmiteOpcao(1);
          recebeFloat();
-         coap.sendResponse(ip, port, packet.messageid, valorRecebido);
+         char buffer[16];
+		 dtostrf(valorRecebido, 1, 4, buffer);
+		 coap.sendResponse(ip, port, packet.messageid, buffer);
         } else if(message == 'b'){  //temp
          transmiteOpcao(2);
          recebeFloat();
-         coap.sendResponse(ip, port, packet.messageid, valorRecebido);
+         char buffer[16];
+		 dtostrf(valorRecebido, 1, 4, buffer);
+		 coap.sendResponse(ip, port, packet.messageid, buffer);
         } else if(message == 'c'){  //temp
          transmiteOpcao(3);
          recebeFloat();
-         coap.sendResponse(ip, port, packet.messageid, valorRecebido);
-        }
+		 char buffer[16];
+		 dtostrf(valorRecebido, 1, 4, buffer);
+		 coap.sendResponse(ip, port, packet.messageid, buffer);        }
       break;
-      /*
+      
       case COAP_PUT:// acho que não precisa de PUT
           coap.sendResponse(ip, port, packet.messageid, "1");        
       break;
-      */
+      
       default:         
           coap.sendResponse(ip, port, packet.messageid, "Not Supported");
       break;
   }
   
 }
+*/
+void endpoint_dist(CoapPacket &packet, IPAddress ip, int port) {
+  Serial.println("----Temp-----");
+  Serial.println("PacketPayloadlen");
+  Serial.println(packet.payloadlen);
+  Serial.println("Packet.messageID");
+  Serial.println(packet.messageid);
+  Serial.println("Packet");
+  Serial.println(packet);
+  Serial.println("Ip");
+  Serial.println(ip);
+  Serial.println("Port");
+  Serial.println(port);
 
+  transmiteOpcao(1);         
+  recebeFloat();
+  Serial.println(valorRecebido);
+  char buffer[16];
+  dtostrf(valorRecebido, 1, 4, buffer);
+  coap.sendResponse(ip, port, packet.messageid, buffer);
+}
+
+void endpoint_temp(CoapPacket &packet, IPAddress ip, int port) {
+  Serial.println("----Temp-----");
+  Serial.println("PacketPayloadlen");
+  Serial.println(packet.payloadlen);
+  Serial.println("Packet.messageID");
+  Serial.println(packet.messageid);
+  Serial.println("Packet");
+  Serial.println(packet);
+  Serial.println("Ip");
+  Serial.println(ip);
+  Serial.println("Port");
+  Serial.println(port);
+
+
+  transmiteOpcao(2);         
+  recebeFloat();
+  Serial.println(valorRecebido);
+  char buffer[16];
+  dtostrf(valorRecebido, 1, 4, buffer);
+  coap.sendResponse(ip, port, packet.messageid, buffer);
+}
+
+void endpoint_led(CoapPacket &packet, IPAddress ip, int port) {
+  Serial.println("----LED-----");
+  Serial.println("PacketPayloadlen");
+  Serial.println(packet.payloadlen);
+  Serial.println("Packet");
+  Serial.println(packet);
+  Serial.println("Ip");
+  Serial.println(ip);
+  Serial.println("Port");
+  Serial.println(port);
+
+  char msg[packet.payloadlen + 1];
+  memcpy(msg, packet.payload, packet.payloadlen);
+  msg[packet.payloadlen] = 0;
+
+  Serial.println(msg[0]);
+
+  if (msg[0] == '1') {
+    digitalWrite(2, HIGH); 
+  } else {
+    digitalWrite(2, LOW);
+  }
+
+  coap.sendResponse(ip, port, packet.messageid, "OK");
+}
 
 
 // --- Others ---
@@ -82,8 +158,6 @@ void transmiteOpcao(int opcaotransmitida){
   Wire.beginTransmission(8);
   Wire.write(opcaotransmitida);
   Wire.endTransmission();
-  
-  previuosMillisResponse = millis();
 }
 
 void ConnectToWiFi(){
@@ -109,58 +183,16 @@ void setup()
   ConnectToWiFi();
 
   //coap.server = endpoints do server
-  coap.server(callback_light, "light");
+  //coap.server(callback_light, "light"); cliente não usa o endpoint light
+  coap.server(endpoint_dist, "dist");
+  coap.server(endpoint_temp, "temp");
+  coap.server(endpoint_led,  "led_server");
   coap.start();
 }
 
 void loop()
 {
-  if (Serial.available()) {
-    opcao = Serial.read();
-    if(opcao == 'a'){
-      Serial.println("opcao 1");
-      opcaotransmitida = 1;
-      transmiteOpcao(opcaotransmitida);
-    }else if(opcao == 'b'){
-      Serial.println("opcao 2");
-      opcaotransmitida = 2;
-      transmiteOpcao(opcaotransmitida);
-    }else if(opcao == 'c'){
-      Serial.println("opcao 3");
-      opcaotransmitida = 3;
-      transmiteOpcao(opcaotransmitida);
-    }
-  }
- }
-  
-  // Adaptar para o Coap
-  if((opcaotransmitida == 1 || opcaotransmitida == 2) && millis() - previuosMillisResponse >= 100)
-  {
-    recebeFloat();
-    
-      if(opcaotransmitida == 1)
-      {
-      	Serial.print("Ditância: ");
-      	Serial.println(valorRecebido, 3);
-        if(grupo2 == true)
-        {
-          char msg[20];
-          dtostrf(valorRecebido, 1, 3, msg);
-          mqttClient.publish(MQTT_SUBSCRIBE_RESPOSTA_GRUPO2, msg);
-          grupo2 = false;
-        }
-      }else if(opcaotransmitida == 2)
-      {
-      	Serial.print("Temperatura: ");
-      	Serial.println(valorRecebido, 3);
-         if(grupo2 == true)
-    	 {
-      		char msg[20];
-      		dtostrf(valorRecebido, 1, 3, msg);
-      		mqttClient.publish(MQTT_SUBSCRIBE_RESPOSTA_GRUPO2, msg);
-      		grupo2 = false;
-    	 }
-       }
-    opcaotransmitida = -1;
-  }
+  coap.loop();
 }
+  
+  

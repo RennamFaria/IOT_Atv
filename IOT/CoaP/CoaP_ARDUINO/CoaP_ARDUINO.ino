@@ -30,15 +30,15 @@ void hcsr04() {
   
   distanceCm = duration * SOUND_SPEED/2;
   
-  //Serial.println("Distance (cm): ");
-  //Serial.println(distanceCm, 5);
+  Serial.println("Distance (cm): ");
+  Serial.println(distanceCm, 5);
   
 }
 
 void dhtCheck(){ 
   tempC = dht.readTemperature();
-  //Serial.print("Temperature: "); 
-  //Serial.print(tempC);Serial.println(" *C ");
+  Serial.print("Temperature: "); 
+  Serial.print(tempC);Serial.println(" *C ");
 }
 
 void receberRequisicao(int numBytes) {
@@ -46,7 +46,9 @@ void receberRequisicao(int numBytes) {
   if (Wire.available()) {
     //Serial.println("Entrando no if da func");
     requisicao = Wire.read(); 
-    if(requisicao == 3) invertLed();
+    if(requisicao == 3) {
+      invertLed();
+    }
   }
 }
 
