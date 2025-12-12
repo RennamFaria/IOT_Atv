@@ -1,167 +1,162 @@
-// esp32
+// Arduino Code
 
+//necessita modificar o código
+
+#include "DHT.h"
+#define DHTPIN 5
 #include <Wire.h>
+#define DHTTYPE DHT11 // DHT11
+#define SOUND_SPEED 0.034
+DHT dht(DHTPIN, DHTTYPE);
 
-// C++ code
+#define ADCPIN A3
+#define LDRPIN A2// Pino de leitura do sensor
 
-//dataloger remoter
-//googlesheets esp32 -> podemos usar para ser BD
 
-#include <PubSubClient.h>
-#include <WiFi.h>
-const char *WIFI_SSID = "moto g84 5G_5388";
-const char *WIFI_PASSW = "fcnb64axjefe8a9";
-const char *MQTT_SERVER = "broker.hivemq.com";
-const uint16_t MQTT_PORT = 1883;
-WiFiClient wifiClient;
-PubSubClient mqttClient(wifiClient);
+unsigned long previousMillisSensors = 0;
+volatile byte requisicao;
+int valorTensaoldr = 0;
+float valorADC = 0;
+float tempADC = 0;
 
-const char *MQTT_MONITORADOR_SONO_GIRO = "/publishESP32/IoT5/giroscópio";
-const char *MQTT_MONITORADOR_SONO_TEMP = "/publishESP32/IoT5/temp";
-const char *MQTT_MONITORADOR_SONO_LUZ = "/publishESP32/IoT5/luz";
-//const char *MQTT_MONITORADOR_SONO_UMIDADE = "/publishESP32/IoT5/umidade";
+long duration;
+double tempC;
 
-unsigned long previousMillisMenu = 0;
-unsigned long previuosMillisResponse = 0;
-bool grupo2 = false;
-char opcao;
-const long interval1 = 100;
-float valorRecebido;
-int opcaotransmitida = 0;
+const int MPU = 0x68;
 
-void recebeFloat(){
-  Wire.requestFrom(8, 4);
-  byte dados[4];
-  int i = 0;
-  while (Wire.available() && i < 4) {
-    dados[i++] = Wire.read();
+
+float ldrValor = 0;
+float lm35Temp = 0;
+float dhtHumi = 0;
+
+int acelX, acelY, acelZ;
+int giroX, giroY, giroZ;
+float mpuTemp = 0;
+
+void inicializaMPU() {
+  Wire.beginTransmission(MPU);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+}
+
+void gisroscopico() {
+  Wire.beginTransmission(MPU);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU, 14, true);
+
+  acelX = Wire.read()<<8 | Wire.read();
+  acelY = Wire.read()<<8 | Wire.read();
+  acelZ = Wire.read()<<8 | Wire.read();
+  int tempRaw = Wire.read()<<8 | Wire.read();
+  giroX = Wire.read()<<8 | Wire.read();
+  giroY = Wire.read()<<8 | Wire.read();
+  giroZ = Wire.read()<<8 | Wire.read();
+
+  mpuTemp = tempRaw / 340.0 + 36.53;
+  Serial.println("Giro X: ");
+  Serial.println(giroX);
+  Serial.println("Giro Y: ");
+  Serial.println(giroY);
+  Serial.println("Giro Z: ");
+  Serial.println(giroZ);
+}
+
+void ldr(){
+  analogReference(DEFAULT);
+  delay(5);
+  valorTensaoldr = analogRead(LDRPIN);
+  ldrValor = valorTensaoldr *(5.0/1023);
+  Serial.println(valorTensaoldr);
+  Serial.println(ldrValor);
+  if(ldrValor < 2.6){
+    Serial.println("Baixa luminosidade");
+    Serial.println(ldrValor);
+  }else{
+    Serial.println("Alta luminosidade");
   }
-  memcpy(&valorRecebido, dados, 4);
 }
 
-void transmiteOpcao(int opcaotransmitida){
-  Wire.beginTransmission(8);
-  Wire.write(opcaotransmitida);
-  Wire.endTransmission();
-  
-  previuosMillisResponse = millis();
-}
-
-void sendData(int opcao, char *MQTT_TOPIC){
-  transmiteOpcao(opcao);
-  delay(10);
-  recebeFloat();
-  
-  char msg[20];
-  dtostrf(valorRecebido, 1, 3, msg);
-  mqttClient.publish(MQTT_TOPIC, msg);
-}
-
-void sendAllData(){
-  sendData(a, MQTT_MONITORADOR_SONO_GIRO);
-  sendData(b, MQTT_MONITORADOR_SONO_TEMP);
-  sendData(c, MQTT_MONITORADOR_SONO_LUZ);
-  //sendData(d, MQTT_MONITORADOR_SONO_UMIDADE);
-}
-
-void ConnectToWiFi(){
-  Serial.print("Connecting to WiFi ");
-  Serial.println(WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSW);
-  while (WiFi.status() != WL_CONNECTED){
-    Serial.print(".");
-    delay(500);
+int analogAvg(int sensorPin) {
+  int amostras = 20;
+  long soma = 0;
+  for (int i = 0; i < amostras; ++i) {
+    soma += analogRead(sensorPin);
+    delay(3); // pequeno delay para estabilizar entre amostras (opcional)
   }
-  Serial.print("\nConnected to ");
-  Serial.println(WIFI_SSID);
+  return (int)(soma / amostras);
 }
 
-void ConnectToMqtt(){
- Serial.println("Connecting to MQTT Broker...");
- while (!mqttClient.connected()){
-  char clientId[100] = "\0";
-  sprintf(clientId, "ESP32Client-dI8n9P1-", random(0xffff));   //variavel = clientID
-  Serial.println(clientId);
-  if (mqttClient.connect(clientId)){
-    Serial.println("Connected to MQTT broker."); 
-		mqttClient.subscribe(MQTT_MONITORADOR_SONO_GIRO);
-    mqttClient.subscribe(MQTT_MONITORADOR_SONO_TEMP);
-    mqttClient.subscribe(MQTT_MONITORADOR_SONO_LUZ);
-    //mqttClient.subscribe(MQTT_PUBLISH_RESPOSTA_GRUPO1);
+void templm35() {
+  analogReference(INTERNAL1V1);
+  delay(5);
+  int leitura = analogAvg(ADCPIN);
+  Serial.println(leitura);
+   
+  lm35Temp = leitura * 1.1 / 1023.0 * 100.0;
+  // float temperatura = (leitura * 1.1 / 1023 - 0.5 )* 100 ; tmp 63
+
+  Serial.print("LM35: ");
+  Serial.print(lm35Temp);
+  Serial.println(" C");
+}
+
+void dhtCheck(){
+   dhtHumi = dht.readHumidity();
+   delay(3);
+   Serial.print("Umidade: ");
+   Serial.println(dhtHumi);
+}
+
+void receberRequisicao(int numBytes) {
+  //Serial.println("entrando receberRequisicao");
+  if (Wire.available()) {
+    //Serial.println("Entrando no if da func");
+    requisicao = Wire.read();
   }
- }
 }
 
-/*
-void CallbackMqtt(char* topic, byte* payload, unsigned int length){
-    
-    String topicoStr = String(topic);
+void enviarFloat() {
+  float valorEnviar;
 
+  //Serial.println("Entrando no EnviaFloat(0)");
+  switch (requisicao) {
+    case 1: valorEnviar = ldrValor; break;
+    case 2: valorEnviar = lm35Temp; break;
+    case 3: valorEnviar = dhtHumi; break;
+    case 4: valorEnviar = (float)giroX; break;
+    case 5: valorEnviar = (float)giroY; break;
+    case 6: valorEnviar = (float)giroZ; break;
+    default: valorEnviar = 202; // erro
+  }
 
-    //  1 Se for comando ('d','e','f') 
-    if (topicoStr == MQTT_PUBLISH_PEDIDO_GRUPO1) {
-        
-        char comando = (char)payload[0];
-        Serial.print("Comando recebido via MQTT: ");
-        Serial.println(comando);
-
-        if (comando == 'd') opcaotransmitida = 1;
-        else if (comando == 'e') opcaotransmitida = 2;
-        else if (comando == 'f') opcaotransmitida = 3;
-        else return;
-
-        transmiteOpcao(opcaotransmitida);
-        grupo2 = true;
-        return;
-    }
-
-    //  2 Se for RESPOSTA do outro grupo float 
-    if (topicoStr == MQTT_PUBLISH_RESPOSTA_GRUPO1) {
-
-        char buf[20];
-        memcpy(buf, payload, length);
-        buf[length] = '\0';
-
-        float valor = atof(buf);
-        
-        if(opcaotransmitida == 4){
-          Serial.print("Distância: ");
-          Serial.println(valor, 3);
-        } else if(opcaotransmitida == 5){
-          Serial.print("Tempeatura: ");
-          Serial.println(valor, 3);
-        }
-
-        return;
-    }
-}
-*/
-
-
-void SetupMqtt(){
- mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
- //mqttClient.setCallback(CallbackMqtt);
+  Serial.println(valorEnviar);
+  byte *ptr = (byte*)&valorEnviar;
+  for (int i = 0; i < sizeof(float); i++) {
+    Wire.write(ptr[i]);
+  }
 }
 
-void setup()
-{
+void setup() {
   Serial.begin(115200);
-  Wire.begin();
-  ConnectToWiFi();
-  SetupMqtt();
+  dht.begin();
+  Wire.begin(4);
+  Wire.onReceive(receberRequisicao);
+  Wire.onRequest(enviarFloat);
+  analogReference(INTERNAL1V1);
+  inicializaMPU();
+
 }
 
-void loop()
-{
-  if (!mqttClient.connected()){
-    ConnectToMqtt();
-  }
-  mqttClient.loop();
-  
-  if(millis() - previuosMillisResponse >= 1000)
+void loop() {
+  if(millis() - previousMillisSensors >= 500)
   {
-    sendAllData();
-
-    previuosMillisResponse = millis();
+    previousMillisSensors = millis();
+    ldr();
+    templm35();
+    dhtCheck();
+    gisroscopico();
   }
 }
+
